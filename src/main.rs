@@ -1,125 +1,41 @@
-use rand::Rng;
-use std::sync::{Arc, Mutex};
-use std::{thread, time::Duration};
+#![allow(unused)]
+mod room;
+use clap::Parser;
+use room::start;
 
-struct Position {
-    x: usize,
-    y: usize,
-}
+/// Simulation of a room with persons that then leave though a door
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+struct Cli {
+    /// Quantity of persons in the room, limited by the room size
+    #[arg(short, long, default_value_t = 10)]
+    people: i32,
 
-struct Person {
-    value: i32,
-    position: Position,
-}
+    /// Quantity of doors in the room, limited by the room size
+    #[arg(short, long, default_value_t = 1)]
+    doors: usize,
 
-fn do_move(matrix: &Arc<Mutex<[[i32; 10]; 10]>>, person: Person) -> Person {
-    let mut target_x = person.position.x;
-    let mut target_y = person.position.y;
+    /// Size of the room or the matrix, a room size of 10 will have 100 elements
+    #[arg(short, long, default_value_t = 10)]
+    room_size: usize,
 
-    let mut rng = rand::thread_rng();
-
-    let mut matrix = matrix.lock().unwrap();
-
-    match rng.gen_range(0..8) {
-        0 => {
-            if (target_x != 0) && (matrix[target_x - 1][target_y] == 0) {
-                target_x -= 1;
-            }
-        }
-        1 => {
-            if (target_y != 0) && (matrix[target_x][target_y - 1] == 0) {
-                target_y -= 1;
-            }
-        }
-        2 => {
-            if (target_x + 1 <= matrix.len() - 1) && (matrix[target_x + 1][target_y] == 0) {
-                target_x += 1;
-            }
-        }
-        3 => {
-            if (target_y + 1 <= matrix.len() - 1) && (matrix[target_x][target_y + 1] == 0) {
-                target_y += 1;
-            }
-        }
-        4 => {
-            if ((target_y + 1 <= matrix.len() - 1) && (target_x + 1 <= matrix.len() - 1))
-                && (matrix[target_x + 1][target_y + 1] == 0)
-            {
-                target_y += 1;
-                target_x += 1;
-            }
-        }
-        5 => {
-            if ((target_y != 0) && (target_x != 0)) && (matrix[target_x - 1][target_y - 1] == 0) {
-                target_y -= 1;
-                target_x -= 1;
-            }
-        }
-        6 => {
-            if ((target_x != 0) && (target_y + 1 <= matrix.len() - 1))
-                && (matrix[target_x - 1][target_y + 1] == 0)
-            {
-                target_y += 1;
-                target_x -= 1;
-            }
-        }
-        7 => {
-            if ((target_y != 0) && (target_x + 1 <= matrix.len() - 1))
-                && (matrix[target_x + 1][target_y - 1] == 0)
-            {
-                target_y -= 1;
-                target_x += 1;
-            }
-        }
-        _ => (),
-    }
-    (*matrix)[person.position.x][person.position.y] = 0;
-    (*matrix)[target_x][target_y] = person.value;
-
-    Person {
-        value: person.value,
-        position: Position {
-            x: target_x,
-            y: target_y,
-        },
-    }
-}
-
-fn print_room(room: &Arc<Mutex<[[i32; 10]; 10]>>) {
-    let matrix = room.lock().unwrap();
-    let mut line = String::new();
-
-    for (_, row) in (*matrix).iter().enumerate() {
-        for (_, col) in row.iter().enumerate() {
-            line = format!("{line} {col}");
-        }
-        line = format!("{line} \n");
-    }
-    clearscreen::clear().expect("failed to clear screen");
-    println!("{}", line);
+    /// Duration of the simulation before the people start heading out
+    #[arg(short, long, default_value_t = 5)]
+    seconds: usize,
 }
 
 fn main() {
-    let room_matrix = Arc::new(Mutex::new([[0; 10]; 10]));
-    let mut threads = vec![];
+    let args = Cli::parse();
 
-    for i in 1..10 {
-        let room_matrix = Arc::clone(&room_matrix);
-        let handle = thread::spawn(move || {
-            let mut person: Person = Person {
-                value: i,
-                position: Position { x: 0, y: 0 },
-            };
-            loop {
-                person = do_move(&room_matrix, person);
-                print_room(&room_matrix);
-                thread::sleep(Duration::from_millis(100));
-            }
-        });
-        threads.push(handle);
+    if args.people >= args.room_size.pow(2).try_into().unwrap() {
+        eprintln!("People must be less than the room size squared! It is recommended half or less for a good visualization.");
+        return;
     }
 
-    for thread in threads {
-        thread.join().unwrap();
+    if args.doors >= args.room_size.pow(2) {
+        eprintln!("Not enough border tiles around the room for the specified door number!");
+        return;
     }
+
+    start(args.people, args.doors, args.room_size, args.seconds);
 }
