@@ -21,7 +21,7 @@ struct Cli {
 
     /// Duration of the simulation before the people start heading out
     #[arg(short, long, default_value_t = 5)]
-    seconds: usize,
+    seconds: u64,
 }
 
 fn main() {

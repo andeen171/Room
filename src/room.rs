@@ -1,7 +1,10 @@
+use rand::seq::SliceRandom;
 use rand::Rng;
 use std::sync::{Arc, Mutex};
-use std::{thread, time::Duration};
+use std::thread;
+use std::time::{Duration, Instant};
 
+#[derive(Clone)]
 struct Position {
     x: usize,
     y: usize,
@@ -12,7 +15,7 @@ struct Person {
     position: Position,
 }
 
-fn do_move(matrix: &Arc<Mutex<Vec<Vec<i32>>>>, person: Person) -> Person {
+fn random_move(matrix: &Arc<Mutex<Vec<Vec<i32>>>>, person: Person) -> Person {
     let mut target_x = person.position.x;
     let mut target_y = person.position.y;
 
@@ -85,6 +88,10 @@ fn do_move(matrix: &Arc<Mutex<Vec<Vec<i32>>>>, person: Person) -> Person {
     }
 }
 
+fn move_to_door() {
+    // TODO: Exiting movement
+}
+
 fn print_room(room: &Arc<Mutex<Vec<Vec<i32>>>>) {
     let matrix = room.lock().unwrap();
     let mut line = String::new();
@@ -99,20 +106,45 @@ fn print_room(room: &Arc<Mutex<Vec<Vec<i32>>>>) {
     println!("{}", line);
 }
 
-pub fn start(qnty_people: i32, qnty_doors: usize, room_size: usize, seconds: usize) {
+fn possible_doors(room_size: usize, qnty_doors: usize) -> Vec<Position> {
+    let mut possible_doors = Vec::new();
+    for i in 0..room_size {
+        possible_doors.push(Position { x: i, y: 0 });
+        possible_doors.push(Position { x: i, y: room_size - 1 });
+        possible_doors.push(Position { x: 0, y: i });
+        possible_doors.push(Position { x: room_size - 1, y: i });
+    }
+    possible_doors
+        .choose_multiple(&mut rand::thread_rng(), qnty_doors)
+        .map(|value| Position {
+            x: value.x,
+            y: value.y,
+        })
+        .collect()
+}
+
+pub fn start(qnty_people: i32, qnty_doors: usize, room_size: usize, seconds: u64) {
     let room_matrix = Arc::new(Mutex::new(vec![vec![0; room_size]; room_size]));
+    let doors = possible_doors(room_size, qnty_doors);
+
     let mut threads = vec![];
 
     for i in 0..qnty_people {
         let room_matrix = Arc::clone(&room_matrix);
+        let doors = doors.clone();
         let handle = thread::spawn(move || {
+            let selected_door = doors.choose(&mut rand::thread_rng()).unwrap();
             let mut person: Person = Person {
                 value: i + 1,
-                position: Position { x: 0, y: 0 },
+                position: Position { x: selected_door.x, y: selected_door.y },
             };
+            let now = Instant::now();
             loop {
-                person = do_move(&room_matrix, person);
+                person = random_move(&room_matrix, person);
                 print_room(&room_matrix);
+                if now.elapsed().as_secs() > seconds {
+                    break;
+                }
                 thread::sleep(Duration::from_millis(100));
             }
         });
