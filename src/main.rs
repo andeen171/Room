@@ -22,6 +22,10 @@ struct Cli {
     /// Duration of the simulation before the people start heading out
     #[arg(short, long, default_value_t = 5)]
     seconds: u64,
+
+    /// Interval in milliseconds between movements
+    #[arg(short, long, default_value_t =200)]
+    interval: u64,
 }
 
 fn main() {
@@ -37,5 +41,5 @@ fn main() {
         return;
     }
 
-    start(args.people, args.doors, args.room_size, args.seconds);
+    start(args.people, args.doors, args.room_size, args.seconds, args.interval);
 }
