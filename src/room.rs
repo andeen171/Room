@@ -1,5 +1,8 @@
+use crate::ui::{restore_terminal, setup_terminal, render, SimPhase, SimStats};
+use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use rand::seq::SliceRandom;
 use rand::Rng;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -15,7 +18,7 @@ struct Person {
     position: Position,
 }
 
-fn random_move(matrix: &Arc<Mutex<Vec<Vec<i32>>>>, person: Person, door: &Position) -> Person {
+fn random_move(matrix: &Arc<Mutex<Vec<Vec<i32>>>>, person: Person, _door: &Position) -> Person {
     let mut rng = rand::thread_rng();
     let mut matrix = matrix.lock().unwrap();
     let mut target = Position {
@@ -25,45 +28,45 @@ fn random_move(matrix: &Arc<Mutex<Vec<Vec<i32>>>>, person: Person, door: &Positi
 
     match rng.gen_range(0..8) {
         0 => {
-            if (target.x != 0) {
+            if target.x != 0 {
                 target.x -= 1;
             }
         }
         1 => {
-            if (target.y != 0) {
+            if target.y != 0 {
                 target.y -= 1;
             }
         }
         2 => {
-            if (target.x + 1 < matrix.len()) {
+            if target.x + 1 < matrix.len() {
                 target.x += 1;
             }
         }
         3 => {
-            if (target.y + 1 < matrix.len()) {
+            if target.y + 1 < matrix.len() {
                 target.y += 1;
             }
         }
         4 => {
-            if ((target.y + 1 < matrix.len()) && (target.x + 1 < matrix.len())) {
+            if (target.y + 1 < matrix.len()) && (target.x + 1 < matrix.len()) {
                 target.y += 1;
                 target.x += 1;
             }
         }
         5 => {
-            if ((target.y != 0) && (target.x != 0)) {
+            if target.y != 0 && target.x != 0 {
                 target.y -= 1;
                 target.x -= 1;
             }
         }
         6 => {
-            if ((target.x != 0) && (target.y + 1 < matrix.len())) {
+            if target.x != 0 && target.y + 1 < matrix.len() {
                 target.y += 1;
                 target.x -= 1;
             }
         }
         7 => {
-            if ((target.y != 0) && (target.x + 1 < matrix.len())) {
+            if target.y != 0 && target.x + 1 < matrix.len() {
                 target.y -= 1;
                 target.x += 1;
             }
@@ -92,16 +95,16 @@ fn move_to_door(room: &Arc<Mutex<Vec<Vec<i32>>>>, mut person: Person, door: &Pos
         y: person.position.y,
     };
 
-    if (door.x > target.x) {
+    if door.x > target.x {
         target.x += 1;
     }
-    if (door.y > target.y) {
+    if door.y > target.y {
         target.y += 1;
     }
-    if (door.x < target.x) {
+    if door.x < target.x {
         target.x -= 1;
     }
-    if (door.y < target.y) {
+    if door.y < target.y {
         target.y -= 1;
     }
 
@@ -117,24 +120,6 @@ fn move_to_door(room: &Arc<Mutex<Vec<Vec<i32>>>>, mut person: Person, door: &Pos
         value: person.value,
         position: target,
     }
-}
-
-fn print_room(room: &Arc<Mutex<Vec<Vec<i32>>>>) {
-    let matrix = room.lock().unwrap();
-    let mut line = String::new();
-
-    for (_, row) in (*matrix).iter().enumerate() {
-        for (_, col) in row.iter().enumerate() {
-            line = match col {
-                0 => format!("{line} _"),
-                -1 => format!("{line} *"),
-                _ => format!("{line} {col}"),
-            }
-        }
-        line = format!("{line} \n");
-    }
-    clearscreen::clear().expect("failed to clear screen");
-    println!("{}", line);
 }
 
 fn possible_doors(room_size: usize, qnty_doors: usize) -> Vec<Position> {
@@ -169,14 +154,75 @@ pub fn start(qnty_people: i32, qnty_doors: usize, room_size: usize, seconds: u64
         (*matrix)[door.x][door.y] = -1;
     }
 
+    let stats = Arc::new(Mutex::new(SimStats {
+        people_remaining: qnty_people as usize,
+        total_people: qnty_people as usize,
+        total_doors: qnty_doors,
+        room_size,
+        elapsed_secs: 0,
+        phase: SimPhase::Random,
+    }));
+
+    let should_quit = Arc::new(AtomicBool::new(false));
+
+    // Spawn render thread
+    let render_matrix = Arc::clone(&room_matrix);
+    let render_stats = Arc::clone(&stats);
+    let render_quit = Arc::clone(&should_quit);
+    let sim_start = Instant::now();
+
+    let render_handle = thread::spawn(move || {
+        let mut terminal = match setup_terminal() {
+            Ok(t) => t,
+            Err(_) => return,
+        };
+
+        loop {
+            if render_quit.load(Ordering::Relaxed) {
+                break;
+            }
+
+            // Non-blocking keyboard poll
+            if event::poll(Duration::ZERO).unwrap_or(false) {
+                if let Ok(Event::Key(key)) = event::read() {
+                    if key.kind == KeyEventKind::Press
+                        && matches!(key.code, KeyCode::Char('q') | KeyCode::Esc)
+                    {
+                        render_quit.store(true, Ordering::Relaxed);
+                        break;
+                    }
+                }
+            }
+
+            // Update elapsed time in stats
+            {
+                let mut s = render_stats.lock().unwrap();
+                s.elapsed_secs = sim_start.elapsed().as_secs();
+            }
+
+            let snapshot = render_matrix.lock().unwrap().clone();
+            let stats_snap = render_stats.lock().unwrap().clone();
+
+            let _ = terminal.draw(|f| render(f, &snapshot, &stats_snap));
+
+            thread::sleep(Duration::from_millis(interval));
+        }
+
+        let _ = restore_terminal(&mut terminal);
+    });
+
+    // Spawn person threads
     let mut threads = vec![];
 
-    for i in 0..qnty_people {
+    for i in 1..=qnty_people {
         let room_matrix = Arc::clone(&room_matrix);
         let doors = doors.clone();
+        let stats = Arc::clone(&stats);
+        let should_quit = Arc::clone(&should_quit);
+
         let handle = thread::spawn(move || {
             let selected_door = doors.choose(&mut rand::thread_rng()).unwrap();
-            let mut person: Person = Person {
+            let mut person = Person {
                 value: i,
                 position: Position {
                     x: selected_door.x,
@@ -184,22 +230,42 @@ pub fn start(qnty_people: i32, qnty_doors: usize, room_size: usize, seconds: u64
                 },
             };
             let now = Instant::now();
+
+            // Phase 1: random movement
             loop {
+                if should_quit.load(Ordering::Relaxed) {
+                    return;
+                }
                 if now.elapsed().as_secs() > seconds {
                     break;
                 }
                 person = random_move(&room_matrix, person, selected_door);
-                print_room(&room_matrix);
                 thread::sleep(Duration::from_millis(interval));
             }
 
+            // Phase 2: move toward door
+            {
+                let mut s = stats.lock().unwrap();
+                s.phase = SimPhase::Exiting;
+            }
+
             loop {
+                if should_quit.load(Ordering::Relaxed) {
+                    return;
+                }
                 if person.value == -1 {
                     break;
                 }
                 person = move_to_door(&room_matrix, person, selected_door);
-                print_room(&room_matrix);
                 thread::sleep(Duration::from_millis(interval));
+            }
+
+            // Person has exited
+            {
+                let mut s = stats.lock().unwrap();
+                if s.people_remaining > 0 {
+                    s.people_remaining -= 1;
+                }
             }
         });
         threads.push(handle);
@@ -208,4 +274,7 @@ pub fn start(qnty_people: i32, qnty_doors: usize, room_size: usize, seconds: u64
     for thread in threads {
         thread.join().unwrap();
     }
+
+    should_quit.store(true, Ordering::Relaxed);
+    render_handle.join().unwrap();
 }
