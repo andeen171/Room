@@ -22,7 +22,7 @@ cargo run
 or using parameters
 ```sh
 cargo run -- --help
-cargo run -- --people 50 --room 20 --doors 5 --seconds 10
+cargo run -- --people 50 --room-size 20 --doors 5 --seconds 10
 ```
 
 Or the recommended way, installing it as a cli, running this command:
@@ -33,5 +33,5 @@ cargo install --path .
 and then using it anywhere in the system via the 'room' keyword
 ```sh
 room --help
-room --people 50 --room 20 --doors 5 --seconds 10
+room --people 50 --room-size 20 --doors 5 --seconds 10
 ```
