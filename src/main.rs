@@ -1,5 +1,6 @@
 #![allow(unused)]
 mod room;
+mod ui;
 use clap::Parser;
 use room::start;
 
